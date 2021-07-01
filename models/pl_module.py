@@ -40,7 +40,7 @@ class VITSModule(pl.LightningModule):
         wav = wav.squeeze(0)
         return wav
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch, batch_idx, optimizer_idx):
         phoneme, a1, f2, x_lengths, spec, spec_lengths, y, y_lengths = batch
 
         opt_g, opt_d = self.optimizers()
@@ -105,7 +105,6 @@ class VITSModule(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         phoneme, a1, f2, x_lengths, spec, spec_lengths, y, y_lengths = batch
-
         y_hat, l_length, attn, ids_slice, x_mask, z_mask, \
         (z, z_p, m_p, logs_p, m_q, logs_q) = self.net_g(phoneme, a1, f2, x_lengths, spec, spec_lengths)
 
