@@ -1,7 +1,6 @@
 name: base
 seed: 1234
 
-
 train:
   epochs: 1000
   batch_size: 16

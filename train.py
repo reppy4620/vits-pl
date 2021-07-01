@@ -30,7 +30,7 @@ def main():
         period=25
     )
 
-    logger = WandbLogger(name=config.name, save_dir=str(model_dir / 'logs'))
+    logger = WandbLogger(name=config.name)
 
     trainer = pl.Trainer(
         logger=logger,
