@@ -20,20 +20,14 @@ def main():
     model = VITSModule(config)
     dm = TextAudioDataModule(config)
 
-    model_dir = Path(config.model_dir)
-    model_dir.mkdir(parents=True, exist_ok=True)
     mc = ModelCheckpoint(
-        dirpath=model_dir,
         filename='VITS_{epoch: 06d}',
         verbose=True,
         save_last=True,
         period=25
     )
 
-    logger = WandbLogger(name=config.name)
-
     trainer = pl.Trainer(
-        logger=logger,
         callbacks=[mc],
         **config.trainer
     )

@@ -8,8 +8,6 @@ train:
   c_mel: 45
   c_kl: 1.0
 
-model_dir: /home/pc3090/models/vits-pl/base
-
 optimizer:
   lr: 0.0002
   betas: [0.8, 0.99]
@@ -47,4 +45,4 @@ model:
 
 trainer:
   deterministic: true
-  tpu_cores: 8
+#  tpu_cores: 8
