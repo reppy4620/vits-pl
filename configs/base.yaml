@@ -45,4 +45,4 @@ model:
 
 trainer:
   deterministic: true
-#  tpu_cores: 8
+  tpu_cores: 8
