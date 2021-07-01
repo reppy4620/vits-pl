@@ -103,7 +103,7 @@ class VITSModule(pl.LightningModule):
             'train/kl': loss_kl
         })
 
-    def validation_step(self, batch):
+    def validation_step(self, batch, batch_idx):
         phoneme, a1, f2, x_lengths, spec, spec_lengths, y, y_lengths = batch
 
         y_hat, l_length, attn, ids_slice, x_mask, z_mask, \
@@ -158,12 +158,12 @@ class VITSModule(pl.LightningModule):
             self.net_g.parameters(),
             self.params.optimizer.lr,
             betas=self.params.optimizer.betas,
-            eps=self.params.optimizer.eps)
+            eps=1e-9)
         opt_d = torch.optim.AdamW(
             self.net_d.parameters(),
             self.params.optimizer.lr,
             betas=self.params.optimizer.betas,
-            eps=self.params.optimizer.eps)
+            eps=1e-9)
         scheduler_g = optim.lr_scheduler.ExponentialLR(opt_g, gamma=self.params.optimizer.lr_decay)
         scheduler_d = optim.lr_scheduler.ExponentialLR(opt_d, gamma=self.params.optimizer.lr_decay)
-        return [opt_g, scheduler_g], [opt_d, scheduler_d]
+        return [opt_g, opt_d], [scheduler_g, scheduler_d]

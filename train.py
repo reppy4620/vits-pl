@@ -2,19 +2,19 @@ import warnings
 from pathlib import Path
 warnings.filterwarnings('ignore')
 
-import hydra
-from omegaconf import DictConfig
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
+from utils import load_config
 from data import TextAudioDataModule
 from models import VITSModule
 
 
-@hydra.main(config_path='./configs', config_name='base')
-def main(config: DictConfig):
+def main():
+    config = load_config('./configs/base.yaml')
+
     pl.seed_everything(config.seed)
 
     model = VITSModule(config)

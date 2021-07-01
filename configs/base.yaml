@@ -1,10 +1,13 @@
 name: base
 seed: 1234
-epochs: 1000
-fp16: false
-segment_size: 8192
-c_mel: 45
-c_kl: 1.0
+
+
+train:
+  epochs: 1000
+  batch_size: 16
+  segment_size: 8192
+  c_mel: 45
+  c_kl: 1.0
 
 model_dir: /home/pc3090/models/vits-pl/base
 

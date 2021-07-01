@@ -2,9 +2,9 @@ import torch
 
 
 class Tokenizer:
-    def __init__(self, dictionary_path='./filelists/word_index.txt'):
+    def __init__(self):
         self.a1_coef = 15
-        self.dictionary = self.load_dictionary(dictionary_path)
+        self.dictionary = self.build_dictionary()
         self.accent_dict = self.build_accent_dict()
 
     def __call__(self, phonemes, a1s, f2s, split='_'):
@@ -21,12 +21,16 @@ class Tokenizer:
         return phonemes, a1s, f2s
 
     @staticmethod
-    def load_dictionary(path):
-        with open(path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
+    def build_dictionary():
+        symbols = [
+            '<pad>', 'pau', 'N', 'a', 'b', 'by', 'ch', 'cl', 'd', 'dy',
+            'e', 'f', 'g', 'gy', 'h', 'hy', 'i', 'j', 'k', 'ky', 'm', 'my',
+            'n', 'ny', 'o', 'p', 'py', 'r', 'ry', 's', 'sh', 't', 'ts', 'u',
+            'v', 'w', 'y', 'z'
+        ]
         dictionary = dict()
-        for i, w in enumerate([w.strip() for w in lines]):
-            dictionary[w] = i
+        for i, s in enumerate([s.strip() for s in symbols]):
+            dictionary[s] = i
         return dictionary
 
     @staticmethod
