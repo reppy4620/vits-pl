@@ -1,28 +1,29 @@
+import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
-import pytorch_lightning as pl
 
+from text import Tokenizer
+from transform import mel_spectrogram_torch
 from .commons import slice_segments
-from .models import SynthesizerTrn, MultiPeriodDiscriminator
 from .losses import (
     generator_loss,
     discriminator_loss,
     feature_loss,
     kl_loss
 )
-from transform import spec_to_mel_torch, mel_spectrogram_torch
-from text import Tokenizer
+from .models import SynthesizerTrn, MultiPeriodDiscriminator
 
 
 class VITSModule(pl.LightningModule):
     def __init__(self, params):
         super().__init__()
         self.params = params
+        self.automatic_optimization = False
 
         self.net_g = SynthesizerTrn(
             len(Tokenizer()),
-            spec_channels=params.data.filter_length // 2 + 1,
+            mel_channels=params.data.n_mel_channels,
             segment_size=params.train.segment_size // params.data.hop_length,
             **params.model)
         self.net_d = MultiPeriodDiscriminator(params.model.use_spectral_norm)
@@ -40,23 +41,15 @@ class VITSModule(pl.LightningModule):
         wav = wav.squeeze(0)
         return wav
 
-    def training_step(self, batch, batch_idx, optimizer_idx):
-        phoneme, a1, f2, x_lengths, spec, spec_lengths, y, y_lengths = batch
+    def training_step(self, batch, batch_idx):
+        phoneme, a1, f2, x_lengths, mel, mel_lengths, y, y_lengths = batch
 
         opt_g, opt_d = self.optimizers()
         sch_g, sch_d = self.lr_schedulers()
 
         y_hat, l_length, attn, ids_slice, x_mask, z_mask, \
-        (z, z_p, m_p, logs_p, m_q, logs_q) = self.net_g(phoneme, a1, f2, x_lengths, spec, spec_lengths)
+        (z, z_p, m_p, logs_p, m_q, logs_q) = self.net_g(phoneme, a1, f2, x_lengths, mel, mel_lengths)
 
-        mel = spec_to_mel_torch(
-            spec,
-            self.params.data.filter_length,
-            self.params.data.n_mel_channels,
-            self.params.data.sampling_rate,
-            self.params.data.mel_fmin,
-            self.params.data.mel_fmax
-        )
         y_mel = slice_segments(mel, ids_slice, self.params.train.segment_size // self.params.data.hop_length)
         y_hat_mel = mel_spectrogram_torch(
             y_hat.squeeze(1),
@@ -104,18 +97,10 @@ class VITSModule(pl.LightningModule):
         })
 
     def validation_step(self, batch, batch_idx):
-        phoneme, a1, f2, x_lengths, spec, spec_lengths, y, y_lengths = batch
+        phoneme, a1, f2, x_lengths, mel, mel_lengths, y, y_lengths = batch
         y_hat, l_length, attn, ids_slice, x_mask, z_mask, \
-        (z, z_p, m_p, logs_p, m_q, logs_q) = self.net_g(phoneme, a1, f2, x_lengths, spec, spec_lengths)
+        (z, z_p, m_p, logs_p, m_q, logs_q) = self.net_g(phoneme, a1, f2, x_lengths, mel, mel_lengths)
 
-        mel = spec_to_mel_torch(
-            spec,
-            self.params.data.filter_length,
-            self.params.data.n_mel_channels,
-            self.params.data.sampling_rate,
-            self.params.data.mel_fmin,
-            self.params.data.mel_fmax
-        )
         y_mel = slice_segments(mel, ids_slice, self.params.train.segment_size // self.params.data.hop_length)
         y_hat_mel = mel_spectrogram_torch(
             y_hat.squeeze(1),

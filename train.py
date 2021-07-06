@@ -1,11 +1,10 @@
 import warnings
-from pathlib import Path
+
 warnings.filterwarnings('ignore')
 
-
+import torch
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import WandbLogger
 
 from utils import load_config
 from data import TextAudioDataModule
@@ -22,13 +21,13 @@ def main():
 
     mc = ModelCheckpoint(
         filename='VITS_{epoch: 06d}',
-        verbose=True,
         save_last=True,
-        period=25
+        every_n_val_epochs=100
     )
 
     trainer = pl.Trainer(
         callbacks=[mc],
+        gpus=torch.cuda.device_count(),
         **config.trainer
     )
     model.trainer = trainer

@@ -5,11 +5,15 @@ from torch.nn.utils import weight_norm, remove_weight_norm, spectral_norm
 from torch.nn import functional as F
 
 import monotonic_align
-from .commons import init_weights, get_padding, sequence_mask, rand_slice_segments, generate_path
+from .commons import (
+    init_weights, get_padding, sequence_mask, rand_slice_segments,
+    generate_path, squeeze, unsqueeze
+)
 from .modules import (
     Log, ElementwiseAffine, ConvFlow, Flip,
     DDSConv, LayerNorm, WN, ResBlock1, ResBlock2,
-    ResidualCouplingLayer, LRELU_SLOPE
+    ResidualCouplingLayer, LRELU_SLOPE,
+    ActNorm, InvConvNear, CouplingBlock
 )
 from .attentions import Encoder
 
@@ -136,6 +140,7 @@ class TextEncoder(nn.Module):
     def __init__(self,
                  n_vocab,
                  n_accent,
+                 n_distance,
                  out_channels,
                  hidden_channels,
                  filter_channels,
@@ -155,8 +160,9 @@ class TextEncoder(nn.Module):
         self.p_dropout = p_dropout
 
         self.p_emb = nn.Embedding(n_vocab, hidden_channels)
-        nn.init.normal_(self.p_emb.weight, 0.0, hidden_channels ** -0.5)
+        self.a1_emb = nn.Embedding(n_distance, hidden_channels)
         self.f2_emb = nn.Embedding(n_accent, hidden_channels)
+        nn.init.normal_(self.p_emb.weight, 0.0, hidden_channels ** -0.5)
 
         hidden_channels *= 3
 
@@ -170,10 +176,10 @@ class TextEncoder(nn.Module):
         self.proj = nn.Conv1d(hidden_channels, out_channels * 2, 1)
 
     def forward(self, phoneme, a1, f2, x_lengths):
-        phoneme_emb = self.p_emb(phoneme) * math.sqrt(self.hidden_channels)
-        f2_emb = self.f2_emb(f2)
-        a1_expanded = a1.unsqueeze(-1).expand(-1, -1, phoneme_emb.size(-1))
-        x = torch.cat([phoneme_emb, f2_emb, a1_expanded], dim=-1)
+        phoneme_emb = self.p_emb(phoneme) * math.sqrt(self.hidden_channels)  # phoneme
+        f2_emb = self.f2_emb(f2)  # f2
+        a1_emb = self.a1_emb(a1)  # a1
+        x = torch.cat([phoneme_emb, f2_emb, a1_emb], dim=-1)
         x = x.transpose(-1, -2)
         x_mask = torch.unsqueeze(sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)
 
@@ -184,38 +190,58 @@ class TextEncoder(nn.Module):
         return x, m, logs, x_mask
 
 
-class ResidualCouplingBlock(nn.Module):
+class FlowSpecDecoder(nn.Module):
     def __init__(self,
-                 channels,
+                 in_channels,
                  hidden_channels,
                  kernel_size,
                  dilation_rate,
+                 n_blocks,
                  n_layers,
-                 n_flows=4,
+                 p_dropout=0.05,
+                 n_split=4,
+                 n_sqz=2,
+                 sigmoid_scale=False,
                  gin_channels=0):
         super().__init__()
-        self.channels = channels
-        self.hidden_channels = hidden_channels
-        self.kernel_size = kernel_size
-        self.dilation_rate = dilation_rate
-        self.n_layers = n_layers
-        self.n_flows = n_flows
-        self.gin_channels = gin_channels
+
+        self.n_sqz = n_sqz
 
         self.flows = nn.ModuleList()
-        for i in range(n_flows):
-            self.flows.append(ResidualCouplingLayer(channels, hidden_channels, kernel_size, dilation_rate, n_layers,
-                                                    gin_channels=gin_channels, mean_only=True))
-            self.flows.append(Flip())
+        for b in range(n_blocks):
+            self.flows.append(ActNorm(channels=in_channels * n_sqz))
+            self.flows.append(InvConvNear(channels=in_channels * n_sqz, n_split=n_split))
+            self.flows.append(
+                CouplingBlock(
+                    in_channels * n_sqz,
+                    hidden_channels,
+                    kernel_size=kernel_size,
+                    dilation_rate=dilation_rate,
+                    n_layers=n_layers,
+                    gin_channels=gin_channels,
+                    p_dropout=p_dropout,
+                    sigmoid_scale=sigmoid_scale))
 
     def forward(self, x, x_mask, g=None, reverse=False):
         if not reverse:
-            for flow in self.flows:
-                x, _ = flow(x, x_mask, g=g, reverse=reverse)
+            flows = self.flows
         else:
-            for flow in reversed(self.flows):
-                x = flow(x, x_mask, g=g, reverse=reverse)
+            flows = reversed(self.flows)
+
+        if self.n_sqz > 1:
+           x, x_mask = squeeze(x, x_mask, self.n_sqz)
+        for f in flows:
+            if not reverse:
+                x, logdet = f(x, x_mask, g=g, reverse=reverse)
+            else:
+                x, logdet = f(x, x_mask, g=g, reverse=reverse)
+        if self.n_sqz > 1:
+            x, x_mask = unsqueeze(x, x_mask, self.n_sqz)
         return x
+
+    def store_inverse(self):
+        for f in self.flows:
+            f.store_inverse()
 
 
 class PosteriorEncoder(nn.Module):
@@ -404,7 +430,8 @@ class SynthesizerTrn(nn.Module):
     def __init__(self,
                  n_vocab,
                  n_accent,
-                 spec_channels,
+                 n_distance,
+                 mel_channels,
                  segment_size,
                  inter_channels,
                  hidden_channels,
@@ -427,7 +454,7 @@ class SynthesizerTrn(nn.Module):
         super().__init__()
         self.n_vocab = n_vocab
         self.n_accent = n_accent
-        self.spec_channels = spec_channels
+        self.spec_channels = mel_channels
         self.inter_channels = inter_channels
         self.hidden_channels = hidden_channels
         self.filter_channels = filter_channels
@@ -449,6 +476,7 @@ class SynthesizerTrn(nn.Module):
 
         self.enc_p = TextEncoder(n_vocab,
                                  n_accent,
+                                 n_distance,
                                  inter_channels,
                                  hidden_channels,
                                  filter_channels,
@@ -458,9 +486,9 @@ class SynthesizerTrn(nn.Module):
                                  p_dropout)
         self.dec = Generator(inter_channels, resblock, resblock_kernel_sizes, resblock_dilation_sizes, upsample_rates,
                              upsample_initial_channel, upsample_kernel_sizes, gin_channels=gin_channels)
-        self.enc_q = PosteriorEncoder(spec_channels, inter_channels, hidden_channels, 5, 1, 16,
+        self.enc_q = PosteriorEncoder(mel_channels, inter_channels, hidden_channels, 5, 1, 12,
                                       gin_channels=gin_channels)
-        self.flow = ResidualCouplingBlock(inter_channels, hidden_channels, 5, 1, 4, gin_channels=gin_channels)
+        self.flow = FlowSpecDecoder(hidden_channels, hidden_channels, 3, 1, 12, 4)
 
         if use_sdp:
             self.dp = StochasticDurationPredictor(hidden_channels, 192, 3, 0.5, 4, gin_channels=gin_channels)
@@ -477,6 +505,8 @@ class SynthesizerTrn(nn.Module):
             g = self.emb_g(sid).unsqueeze(-1)  # [b, h, 1]
         else:
             g = None
+
+        y, y_lengths, y_max_length = self.preprocess(y, y_lengths, y.size(2))
 
         z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g)
         z_p = self.flow(z, y_mask, g=g)
@@ -547,3 +577,10 @@ class SynthesizerTrn(nn.Module):
         z_hat = self.flow(z_p, y_mask, g=g_tgt, reverse=True)
         o_hat = self.dec(z_hat * y_mask, g=g_tgt)
         return o_hat, y_mask, (z, z_p, z_hat)
+
+    def preprocess(self, y, y_lengths, y_max_length):
+        if y_max_length is not None:
+            y_max_length = (y_max_length // 2) * 2
+            y = y[:, :, :y_max_length]
+        y_lengths = (y_lengths // 2) * 2
+        return y, y_lengths, y_max_length
